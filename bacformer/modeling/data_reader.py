@@ -238,24 +238,24 @@ def collate_genome_samples(
 ) -> dict[str, torch.Tensor]:
     """Collate function for GenomeSample."""
     prot_emb = pad_sequence(
-        torch.tensor(np.stack([sample["prot_embeddings"] for sample in samples]), dtype=torch.float32),
+        [torch.tensor(sample["prot_embeddings"], dtype=torch.float32) for sample in samples],
         batch_first=True,
         padding_value=pad_token_id,
     )
     special_tokens_mask = pad_sequence(
-        torch.tensor(np.stack([sample["special_tokens_mask"] for sample in samples]), dtype=torch.long),
+        [torch.tensor(sample["special_tokens_mask"], dtype=torch.long) for sample in samples],
         batch_first=True,
         padding_value=pad_token_id,
     )
     token_type_ids = pad_sequence(
-        torch.tensor(np.stack([sample["token_type_ids"] for sample in samples]), dtype=torch.long),
+        [torch.tensor(sample["token_type_ids"], dtype=torch.long) for sample in samples],
         batch_first=True,
         padding_value=max_n_contigs,
     )
 
     if "labels" in samples[0]:
         labels = pad_sequence(
-            torch.tensor(np.stack([sample["labels"] for sample in samples]), dtype=torch.long),
+            [torch.tensor(sample["labels"], dtype=torch.long) for sample in samples],
             batch_first=True,
             padding_value=-100,
         )
@@ -270,7 +270,7 @@ def collate_genome_samples(
     }
     if "attention_mask" in samples[0]:
         padding_mask = pad_sequence(
-            torch.tensor(np.stack([sample["attention_mask"] for sample in samples]), dtype=torch.float32),
+            [torch.tensor(sample["attention_mask"], dtype=torch.float32) for sample in samples],
             batch_first=True,
             padding_value=pad_token_id,
         )
