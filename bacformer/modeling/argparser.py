@@ -49,7 +49,7 @@ class BacformerArgumentParser(Tap):
     gradient_accumulation_steps: int = 8
     logging_steps: int = 100
     monitor_metric: str = "loss"
-    dataloader_num_workers: int = 1  # 8
+    dataloader_num_workers: int = 8
     eval_steps: int = 4000
     save_steps: int = 4000
 
