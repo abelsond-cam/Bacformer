@@ -35,6 +35,7 @@ def get_gpu_info() -> tuple[int, bool]:
         logging.info(f"Nr of CUDA devices available: {n_gpus}")
         if n_gpus > 0:
             return n_gpus, False
+        return 0, False
     except AttributeError:
         n_gpus = torch.cuda.device_count()
         logging.info(f"Nr of GPU devices available: {n_gpus}")

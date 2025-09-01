@@ -40,10 +40,12 @@ def run(
     logging.info(f"Nr of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
     # get datasets
-    print("Input dir:", args.input_dir)
     data = fetch_training_data(
         input_dir=args.input_dir,
         mgm_probability=args.mgm_probability,
+        max_n_proteins=args.max_n_proteins,
+        max_n_contigs=args.max_n_contigs,
+        end_token_idx=args.protein_clusters_vocab_size,
         test=args.test,
         random_state=args.random_state,
     )
@@ -76,7 +78,7 @@ def run(
     # get training args
     training_args = TrainingArguments(
         output_dir=args.output_dir,
-        evaluation_strategy="steps" if args.eval_steps > 0 else "epoch",
+        eval_strategy="steps" if args.eval_steps > 0 else "epoch",
         eval_steps=args.eval_steps if args.eval_steps > 0 else None,
         learning_rate=lr,
         save_strategy="steps" if args.save_steps > 0 else "epoch",
@@ -106,8 +108,7 @@ def run(
         tf32=use_tf32,
         ignore_data_skip=True,
         # fix for DDP training with IterableDataset
-        dispatch_batches=False,
-        split_batches=False,
+        accelerator_config={"dispatch_batches": False, "even_batches": True} if n_gpus > 1 else None,
         ddp_find_unused_parameters=False if use_grad_checkpointing else True,
         remove_unused_columns=False,
         use_ipex=use_ipex,
@@ -117,9 +118,7 @@ def run(
         ddp_broadcast_buffers=False,
     )
 
-    collate_genome_samples_fn = partial(
-        collate_genome_samples, SPECIAL_TOKENS_DICT["PAD"], args.max_n_proteins, args.max_n_contigs
-    )
+    collate_genome_samples_fn = partial(collate_genome_samples, SPECIAL_TOKENS_DICT["PAD"], args.max_n_contigs)
     trainer = BacformerTrainer(
         model=model,
         data_collator=collate_genome_samples_fn,
@@ -139,6 +138,7 @@ def run(
 def main(args):
     """Train the model."""
     set_seed(args.random_state)
+    os.makedirs(args.output_dir, exist_ok=True)
 
     # write the arguments for reproducibility
     with open(os.path.join(args.output_dir, "args.json"), "w") as f:

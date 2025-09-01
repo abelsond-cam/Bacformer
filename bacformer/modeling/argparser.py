@@ -17,9 +17,9 @@ class BacformerArgumentParser(Tap):
 
     # model arguments
     batch_size: int = 2
-    lr: float = 0.0001
-    num_hidden_layers: int = 6
-    num_attention_heads: int = 4
+    lr: float = 0.00015
+    num_hidden_layers: int = 12
+    num_attention_heads: int = 8
     hidden_size: int = 480
     intermediate_size: int = 1280
     hidden_dropout_prob: float = 0.1
@@ -49,7 +49,7 @@ class BacformerArgumentParser(Tap):
     gradient_accumulation_steps: int = 8
     logging_steps: int = 100
     monitor_metric: str = "loss"
-    dataloader_num_workers: int = 4
+    dataloader_num_workers: int = 1  # 8
     eval_steps: int = 4000
     save_steps: int = 4000
 
@@ -61,4 +61,4 @@ class BacformerArgumentParser(Tap):
     n_total_samples: int = 1203731  # n total samples in the train set
     n_nodes: int = 1
 
-    pretrained_model_dir: str = None  # "/Users/maciejwiatrak/Downloads/causal-model-ckpt-17798-pretrained/"
+    pretrained_model_dir: str = None

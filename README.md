@@ -14,7 +14,7 @@ whole-bacterial genomes as a sequence of proteins ordered by their genomic coord
 It takes as input average protein embeddings from protein language models and computes contextualised protein
 embeddings conditional on other proteis present in the genome. Bacformer is trained on a diverse dataset of ~1.3M bacterial genomes and ~3B proteins.
 
-![Bacformer](files/Bacformer.png)
+![Bacformer](../Bacformer/bacformer/utils/visualizations/Bacformer.png)
 
 Bacformer can be applied to a wide range of tasks, including: strain clustering, essential genes prediction, operon identification,
 ppi prediction, protein function prediction and more. We provide [model checkpoints]() for pretrained models as well as Bacformer
