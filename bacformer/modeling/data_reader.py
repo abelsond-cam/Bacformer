@@ -63,27 +63,101 @@ def mask_prot_embs(
 
 def transform_sample(
     mgm_probability: float = 0.0,
-    prot_emb_token_id: int = SPECIAL_TOKENS_DICT["PROT_EMB"],
-    mask_token_id: int = SPECIAL_TOKENS_DICT["MASK"],
+    special_tokens_dict: dict[str, int] = SPECIAL_TOKENS_DICT,
+    max_n_proteins: int = 6000,
+    max_n_contigs: int = 1000,
+    end_token_id: int = 20000,
+    embeddings_col_name: str = "protein_embeddings",
+    prot_cluster_id_col_name: str = "prot_cluster_id",
     sample: dict[str, Any] = None,
-) -> dict[str, Any]:
-    """Transform sample for the model input."""
+):
+    """Transform sample for the model input for ESMC.
+
+    Args:
+        mgm_probability (float): Probability of masking protein embeddings.
+        special_tokens_dict (dict[str, int]): Dictionary of special tokens.
+        max_n_proteins (int): Maximum number of proteins.
+        max_n_contigs (int): Maximum number of contigs.
+        end_token_id (int): ID for the end token.
+        sample (dict[str, Any]): Sample containing protein embeddings and indices.
+
+    Returns
+    -------
+        dict[str, Any]: Processed sample with protein embeddings, special tokens mask, token type IDs, labels, and attention mask.
+    """
+    pad_emb = np.zeros(len(sample[embeddings_col_name][0]), dtype=np.float32)
+    # add CLS token
+    labels = [-100]
+    special_tokens_mask = [special_tokens_dict["CLS"]]
+    protein_embeddings = [pad_emb]
+    attention_mask = [1.0]
+    token_type_ids = [0]
+
+    if "contig_idx" not in sample:
+        sample["contig_idx"] = np.ones_like(sample[embeddings_col_name])
+
+    if prot_cluster_id_col_name not in sample:
+        sample[prot_cluster_id_col_name] = [-100] * len(sample[embeddings_col_name])
+    curr_contig_idx = 0
+    for prot_emb, label, cidx in zip(
+        sample[embeddings_col_name], sample[prot_cluster_id_col_name], sample["contig_idx"], strict=False
+    ):
+        # if the contig index is greater than the max number of contigs, set it to the max
+        cidx = min(cidx, max_n_contigs - 1)
+        if cidx != curr_contig_idx:
+            # add a separator token for the previous contig
+            special_tokens_mask.append(special_tokens_dict["SEP"])
+            protein_embeddings.append(pad_emb)
+            token_type_ids.append(curr_contig_idx)
+            labels.append(-100)
+            attention_mask.append(1.0)
+        special_tokens_mask.append(special_tokens_dict["PROT_EMB"])
+        labels.append(label)
+        protein_embeddings.append(prot_emb)
+        token_type_ids.append(cidx)
+        attention_mask.append(1.0)
+        curr_contig_idx = cidx
+
+    # add the last separator token
+    special_tokens_mask.append(special_tokens_dict["SEP"])
+    protein_embeddings.append(pad_emb)
+    token_type_ids.append(curr_contig_idx)
+    labels.append(-100)
+    attention_mask.append(1.0)
+
+    # add END token
+    protein_embeddings = protein_embeddings[: max_n_proteins - 1] + [pad_emb]
+    special_tokens_mask = special_tokens_mask[: max_n_proteins - 1] + [special_tokens_dict["END"]]
+    token_type_ids = token_type_ids[: max_n_proteins - 1] + [curr_contig_idx]
+    labels = labels[: max_n_proteins - 1] + [end_token_id]
+    attention_mask = attention_mask[: max_n_proteins - 1] + [1.0]
+
+    # do the masking
     special_tokens_mask, labels = mask_prot_embs(
-        special_tokens_mask=np.array(sample["processed_data"]["special_tokens_mask"]),
-        labels=np.array(sample["processed_data"]["labels"]),
+        special_tokens_mask=np.array(special_tokens_mask, dtype=np.int64),
+        labels=np.array(labels, dtype=np.int64),
         mgm_probability=mgm_probability,
-        prot_emb_token_id=prot_emb_token_id,
-        mask_token_id=mask_token_id,
+        prot_emb_token_id=special_tokens_dict["PROT_EMB"],
+        mask_token_id=special_tokens_dict["MASK"],
     )
-    # overwrite the special tokens mask
-    sample["processed_data"]["special_tokens_mask"] = special_tokens_mask
-    sample["processed_data"]["labels"] = labels
-    return sample
+
+    return {
+        "prot_embeddings": protein_embeddings,
+        "special_tokens_mask": special_tokens_mask,
+        "token_type_ids": np.array(token_type_ids, dtype=np.int64),
+        "labels": labels,
+        "attention_mask": np.array(attention_mask, dtype=np.float32),
+    }
 
 
 def fetch_training_data(
     input_dir: str,
     mgm_probability: float,
+    max_n_proteins: int,
+    max_n_contigs: int,
+    end_token_idx: int = 50000,
+    embeddings_col_name: str = "protein_embeddings",
+    indices_col_name: str = "prot_cluster_idx",
     test: bool = False,
     random_state: int = 42,
 ):
@@ -109,24 +183,27 @@ def fetch_training_data(
             for f in os.listdir(os.path.join(input_dir, "val"))
             if f.endswith("parquet")
         ],
-        "test": [
-            os.path.join(input_dir, "test", f)
-            for f in os.listdir(os.path.join(input_dir, "test"))
-            if f.endswith("parquet")
-        ],
     }
     transform_fn = partial(
-        transform_sample, mgm_probability, SPECIAL_TOKENS_DICT["PROT_EMB"], SPECIAL_TOKENS_DICT["MASK"]
+        transform_sample,
+        mgm_probability,
+        SPECIAL_TOKENS_DICT,
+        max_n_proteins,
+        max_n_contigs,
+        end_token_idx,
+        embeddings_col_name,
+        indices_col_name,
     )
+    cols = ["contig_idx", embeddings_col_name, indices_col_name]
     train_dataset = (
         load_dataset("parquet", data_files=data_files, split="train", streaming=True)
-        .select_columns("processed_data")
-        .map(transform_fn, batched=False, with_indices=False)
+        .select_columns(cols)
+        .map(transform_fn, batched=False, with_indices=False, remove_columns=cols)
     )
     val_dataset = (
         load_dataset("parquet", data_files=data_files, split="validation", streaming=True)
-        .select_columns("processed_data")
-        .map(transform_fn, batched=False, with_indices=False)
+        .select_columns(cols)
+        .map(transform_fn, batched=False, with_indices=False, remove_columns=cols)
     )
 
     if not test:
@@ -135,10 +212,17 @@ def fetch_training_data(
             val_dataset=val_dataset,
         )
 
+    data_files = {
+        "test": [
+            os.path.join(input_dir, "test", f)
+            for f in os.listdir(os.path.join(input_dir, "test"))
+            if f.endswith("parquet")
+        ]
+    }
     test_dataset = (
         load_dataset("parquet", data_files=data_files, split="test", streaming=True)
-        .select_columns("processed_data")
-        .map(transform_fn, batched=False, with_indices=False)
+        .select_columns(cols)
+        .map(transform_fn, batched=False, with_indices=False, remove_columns=cols)
     )
     return DataReaderOutput(
         train_dataset=train_dataset,
@@ -149,41 +233,32 @@ def fetch_training_data(
 
 def collate_genome_samples(
     pad_token_id: int = 0,
-    max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
     samples: list[dict] = None,
 ) -> dict[str, torch.Tensor]:
     """Collate function for GenomeSample."""
     prot_emb = pad_sequence(
-        [
-            torch.tensor(sample["protein_embeddings"], dtype=torch.float32).squeeze(0)[:max_n_proteins]
-            for sample in samples
-        ],
+        [torch.tensor(sample["prot_embeddings"], dtype=torch.float32) for sample in samples],
         batch_first=True,
         padding_value=pad_token_id,
     )
     special_tokens_mask = pad_sequence(
-        [
-            torch.tensor(sample["special_tokens_mask"], dtype=torch.long).squeeze(0)[:max_n_proteins]
-            for sample in samples
-        ],
+        [torch.tensor(sample["special_tokens_mask"], dtype=torch.long) for sample in samples],
         batch_first=True,
         padding_value=pad_token_id,
     )
     token_type_ids = pad_sequence(
-        [torch.tensor(sample["token_type_ids"], dtype=torch.long).squeeze(0)[:max_n_proteins] for sample in samples],
+        [torch.tensor(sample["token_type_ids"], dtype=torch.long) for sample in samples],
         batch_first=True,
         padding_value=max_n_contigs,
     )
 
     if "labels" in samples[0]:
         labels = pad_sequence(
-            [torch.tensor(sample["labels"], dtype=torch.long).squeeze(0)[:max_n_proteins] for sample in samples],
+            [torch.tensor(sample["labels"], dtype=torch.long) for sample in samples],
             batch_first=True,
             padding_value=-100,
         )
-    elif "label" in samples[0]:
-        labels = torch.tensor([sample["label"] for sample in samples], dtype=torch.long)
     else:
         labels = torch.tensor([])
 
@@ -195,10 +270,7 @@ def collate_genome_samples(
     }
     if "attention_mask" in samples[0]:
         padding_mask = pad_sequence(
-            [
-                torch.tensor(sample["attention_mask"], dtype=torch.float32).squeeze(0)[:max_n_proteins]
-                for sample in samples
-            ],
+            [torch.tensor(sample["attention_mask"], dtype=torch.float32) for sample in samples],
             batch_first=True,
             padding_value=pad_token_id,
         )
