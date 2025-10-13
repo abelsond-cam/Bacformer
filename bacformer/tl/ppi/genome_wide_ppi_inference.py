@@ -114,7 +114,7 @@ def run(
 
     # save to parquet
     output_df = output_df.drop(columns=["prot_1", "prot_2"])
-    output_df.to_csv(output_filepath, index=False)
+    output_df.to_parquet(output_filepath)
 
 
 class ArgumentParser(Tap):
