@@ -17,6 +17,7 @@ def run(
     strain_gbff_filepath: str,
     output_filepath: str,
     ppi_batch_size: int = 50000,
+    min_interaction_score: float = 0.5,
 ):
     """Run genome-wide PPI inference on a single genome."""
     # load model
@@ -97,12 +98,14 @@ def run(
             ).mean(dim=0)
             # get PPI logits
             logits = sigmoid(model.ppi_head(reprs))
-            output["probability"] += logits.type(torch.float32).cpu().numpy().tolist()
+            output["interaction_score"] += logits.type(torch.float32).cpu().numpy().tolist()
             output["prot_1"] += prot_pairs_batch[0].cpu().numpy().tolist()
             output["prot_2"] += prot_pairs_batch[1].cpu().numpy().tolist()
 
     # save the output
     output_df = pd.DataFrame(output)
+    # filter by min interaction score
+    output_df = output_df[output_df["interaction_score"] >= min_interaction_score].reset_index(drop=True)
     # add locus tags and protein ids
     output_df["locus_tag_1"] = [locus_tags[i] for i in output_df["prot_1"]]
     output_df["locus_tag_2"] = [locus_tags[i] for i in output_df["prot_2"]]
@@ -110,6 +113,7 @@ def run(
     output_df["protein_id_2"] = [protein_ids[i] for i in output_df["prot_2"]]
 
     # save to parquet
+    output_df = output_df.drop(columns=["prot_1", "prot_2"])
     output_df.to_parquet(output_filepath)
 
 
@@ -124,6 +128,7 @@ class ArgumentParser(Tap):
     strain_gbff_filepath: str
     output_filepath: str
     ppi_batch_size: int = 50000
+    min_interaction_score: float = 0.5
 
 
 if __name__ == "__main__":
@@ -133,4 +138,5 @@ if __name__ == "__main__":
         strain_gbff_filepath=args.strain_gbff_filepath,
         output_filepath=args.output_filepath,
         ppi_batch_size=args.ppi_batch_size,
+        min_interaction_score=args.min_interaction_score,
     )
