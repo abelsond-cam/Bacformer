@@ -261,7 +261,7 @@ def compute_genome_protein_embeddings(
     model: Callable,
     tokenizer: Callable,
     protein_sequences: list[str] | list[list[str]],
-    contig_ids: list[str] = None,
+    contig_ids: list[str | None] = None,
     model_type: Literal["esm2", "esmc", "protbert"] = "esm2",
     batch_size: int = 64,
     max_prot_seq_len: int = 1024,
@@ -271,6 +271,8 @@ def compute_genome_protein_embeddings(
 
     Args:
         protein_sequences (List[str]): List or list of lists of protein sequences to generate embeddings for.
+        contig_ids (List[Optional[str]]): List of contig IDs corresponding to the protein sequences. The contig_ids
+            must have the same length as protein_sequences if provided. If not provided, all protein sequences are assumed to belong to the same contig.
         model_type (str): Type of the model, either "esm2" or "esmc".
         batch_size (int): Batch size for processing sequences.
         max_seq_len (int): Maximum sequence length for the model.
@@ -643,7 +645,7 @@ def dataset_col_to_bacformer_inputs(
 
 def protein_seqs_to_bacformer_inputs(
     protein_sequences: list[str] | list[list[str]],
-    contig_ids: list[str] | None = None,
+    contig_ids: list[str | None] | None = None,
     batch_size: int = 64,
     max_prot_seq_len: int = 1024,
     max_n_proteins: int = 6000,
@@ -656,7 +658,7 @@ def protein_seqs_to_bacformer_inputs(
         protein_sequences (List[str] | List[List[str]]): The protein sequences to convert. The protein sequences
             can be passed either as a list of string or a nested list of strings, where each nested list
             represents a set of proteins in the same contig/chromosome/plasmid.
-        contig_ids (List[str]): A list of contig_ids representing contig/chromosome/plasmid.
+        contig_ids (List[Optional[str]]): A list of contig_ids representing contig/chromosome/plasmid.
             Must be of the same length as protein_sequences argument.
         batch_size (int): The batch size to use for processing.
         max_prot_seq_len (int): The maximum protein sequence length for the model.
