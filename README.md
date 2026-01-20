@@ -52,9 +52,11 @@ and was developed in `python=3.10`.
 
 Bacformer uses protein embeddings as input, leveraging pretrained protein language models:
 - Bacformer (26M parameters) uses [ESM-2](https://huggingface.co/facebook/esm2_t12_35M_UR50D) (`esm2_t12_35M_UR50D`)
-- Bacformer Large (300M parameters) uses [ESM-C](https://huggingface.co/EvolutionaryScale/esmc-300m-2024-12) (`esmc-300m-2024-12`)
+- Bacformer Large (300M parameters) uses [ESM-C](https://huggingface.co/Synthyra/ESMplusplus_small) (`Synthyra/ESMplusplus_small`)
 
 We recommend using the [faplm](https://github.com/pengzhangzhi/faplm) package to compute protein embeddings in a fast and efficient way.
+
+Note: ESM++ is a faithful implementation of ESM-C ([license](https://www.evolutionaryscale.ai/policies/cambrian-open-license-agreement))
 
 ### Installation
 

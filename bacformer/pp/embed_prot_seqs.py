@@ -7,11 +7,10 @@ from typing import Any, Literal
 from datasets import Dataset
 from transformers import AutoModel, AutoTokenizer
 
-from bacformer.modeling import SPECIAL_TOKENS_DICT, BacformerModel
+from bacformer.modeling import SPECIAL_TOKENS_DICT
 
 try:
     from faesm.esm import FAEsmForMaskedLM
-    from faesm.esmc import ESMC
 
     faesm_installed = True
 except ImportError:
@@ -80,21 +79,18 @@ def load_plm(
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if model_type.lower() == "esm2":
         if faesm_installed:
-            model = FAEsmForMaskedLM.from_pretrained(model_path).to(device).eval().to(torch.float16)
+            model = FAEsmForMaskedLM.from_pretrained(model_path).to(device).eval().to(torch.bfloat16)
             tokenizer = model.tokenizer
         else:
             model = AutoModel.from_pretrained(model_path).to(device).eval()
             tokenizer = AutoTokenizer.from_pretrained(model_path)
     elif model_type.lower() == "esmc":
-        if not faesm_installed:
-            raise ValueError(
-                "ESMC only supported with faESM. Please consider installing faESM: https://github.com/pengzhangzhi/faplm"
-            )
-        model = ESMC.from_pretrained(model_path, use_flash_attn=True).to(device).eval().to(torch.float16)
+        # we use ESM++ which is a faithful implementation of ESM-C (https://huggingface.co/Synthyra/ESMplusplus_small)
+        model = AutoModel.from_pretrained(model_path, trust_remote_code=True).to(device).eval().to(torch.bfloat16)
         tokenizer = model.tokenizer
     else:
         # load protbert
-        model = AutoModel.from_pretrained(model_path, torch_dtype=torch.float16).to(device).eval()
+        model = AutoModel.from_pretrained(model_path, torch_dtype=torch.bfloat16).to(device).eval()
         tokenizer = AutoTokenizer.from_pretrained(model_path, do_lower_case=False)
 
     return model, tokenizer
@@ -102,8 +98,10 @@ def load_plm(
 
 def protein_embeddings_to_inputs(
     protein_embeddings: list[list[np.ndarray]] | list[np.ndarray],
-    max_n_proteins: int = 6000,
+    max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
+    contig_ids: list[int] | None = None,  # only for bacformer large model
+    bacformer_model_type: Literal["base", "large"] = "base",
     cls_token_id: int = SPECIAL_TOKENS_DICT["CLS"],
     sep_token_id: int = SPECIAL_TOKENS_DICT["CLS"],
     prot_emb_token_id: int = SPECIAL_TOKENS_DICT["PROT_EMB"],
@@ -116,6 +114,8 @@ def protein_embeddings_to_inputs(
         protein_embeddings (List[List[np.ndarray]]): The protein embeddings to convert.
         max_n_proteins (int): The maximum number of proteins to use for each genome.
         max_n_contigs (int): The maximum number of contigs to use for each genome.
+        contig_ids (List[int], optional): The contig IDs for each protein. Only used for Bacformer large model.
+        bacformer_model_type (Literal["base", "large"]): The type of Bacformer model.
         cls_token_id (int): The ID of the CLS token.
         sep_token_id (int): The ID of the SEP token.
         prot_emb_token_id (int): The ID of the protein embedding token.
@@ -130,6 +130,28 @@ def protein_embeddings_to_inputs(
     # check if protein_embeddings is a list of lists, if not, make it one
     if not isinstance(protein_embeddings[0], list):
         protein_embeddings = [protein_embeddings]
+
+    if bacformer_model_type == "large":
+        # the preprocessing is simpler for the large model
+        # no special tokens, just concatenate all contigs and create contig ids
+        # create contig ids if not provided by using the number of proteins in each contig
+        if contig_ids is None:
+            contig_ids = []
+            for contig_idx, contig in enumerate(protein_embeddings):
+                contig_ids += [contig_idx] * len(contig)
+        # concatenate all contigs into one array of shape N x D
+        protein_embeddings = torch.tensor(
+            np.concatenate([np.stack(pe) for pe in protein_embeddings], axis=0), dtype=torch_dtype
+        )[:max_n_proteins, :]
+        contig_ids = torch.tensor(contig_ids, dtype=torch.long)[:max_n_proteins]
+        # clamp contig ids to max_n_contigs - 1
+        contig_ids = torch.clamp(contig_ids, max=max_n_contigs - 1)
+        attention_mask = torch.ones_like(contig_ids)
+        return {
+            "protein_embeddings": protein_embeddings.unsqueeze(0),
+            "contig_ids": contig_ids.unsqueeze(0),
+            "attention_mask": attention_mask.unsqueeze(0),
+        }
 
     # preprocess protein embeddings
     dim = len(protein_embeddings[0][0])
@@ -220,6 +242,7 @@ def generate_protein_embeddings(
         )
         # move inputs to the same device as the model
         inputs = {k: v.to(device) for k, v in inputs.items()}
+        inputs["return_dict"] = True
 
         # Get the last hidden state from the model
         with torch.no_grad():
@@ -230,19 +253,21 @@ def generate_protein_embeddings(
                     "ijk,ij->ik", last_hidden_state, inputs["attention_mask"].type_as(last_hidden_state)
                 ) / inputs["attention_mask"].sum(1).unsqueeze(1)
             elif model_type == "esmc":
-                last_hidden_state = model(inputs["input_ids"]).embeddings
-                # Get protein representations from amino acid token representations
-                protein_representations = average_unpadded(last_hidden_state, inputs["attention_mask"])
+                last_hidden_state = model(**inputs).last_hidden_state
+                protein_representations = torch.einsum(
+                    "ijk,ij->ik", last_hidden_state, inputs["attention_mask"].type_as(last_hidden_state)
+                ) / inputs["attention_mask"].sum(1).unsqueeze(1)
             elif model_type == "protbert":
                 last_hidden_state = model(
                     input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]
                 ).last_hidden_state
+                # mean over all valid tokens
                 protein_representations = torch.einsum(
                     "ijk,ij->ik", last_hidden_state, inputs["attention_mask"].type_as(last_hidden_state)
                 ) / inputs["attention_mask"].sum(1).unsqueeze(1)
 
         # Append the generated embeddings to the list, moving them to CPU and converting to numpy
-        mean_protein_embeddings += list(protein_representations.cpu().numpy())
+        mean_protein_embeddings += list(protein_representations.cpu().type(torch.float32).numpy())
 
     return mean_protein_embeddings
 
@@ -357,6 +382,7 @@ def compute_bacformer_embeddings(
     model: Callable,
     protein_embeddings: list[list[np.ndarray]] | list[np.ndarray],
     contig_ids: list[str] = None,
+    bacformer_model_type: Literal["base", "large"] = "base",
     max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
     genome_pooling_method: Literal["mean", "max"] = None,
@@ -406,17 +432,12 @@ def compute_bacformer_embeddings(
         protein_embeddings=protein_embeddings,
         max_n_proteins=max_n_proteins,
         max_n_contigs=max_n_contigs,
+        bacformer_model_type=bacformer_model_type,
     )
     inputs = {k: v.to(device) for k, v in inputs.items()}
     # Compute Bacformer embeddings
     with torch.no_grad():
-        bacformer_embeddings = model(
-            protein_embeddings=inputs["protein_embeddings"].type(model.dtype),
-            special_tokens_mask=inputs["special_tokens_mask"],
-            token_type_ids=inputs["token_type_ids"],
-            attention_mask=inputs["attention_mask"],
-            return_dict=True,
-        ).last_hidden_state
+        bacformer_embeddings = model(**inputs, return_dict=True).last_hidden_state
 
     # perform genome pooling
     if genome_pooling_method == "mean":
@@ -424,8 +445,13 @@ def compute_bacformer_embeddings(
     elif genome_pooling_method == "max":
         return bacformer_embeddings.max(dim=1).values.type(torch.float32).cpu().squeeze().numpy()
 
-    # only keep the protein embeddings and not special tokens
-    bacformer_embeddings = bacformer_embeddings[inputs["special_tokens_mask"] == prot_emb_idx]
+    # only keep the protein embeddings and not special tokens, only applies to base model (Bacformer 26M)
+    # and not large model (Bacformer Large 300M)
+    if "special_tokens_mask" in inputs:
+        bacformer_embeddings = bacformer_embeddings[inputs["special_tokens_mask"] == prot_emb_idx]
+    else:
+        # For large model, squeeze the batch dimension (should be 1)
+        bacformer_embeddings = bacformer_embeddings.squeeze(0)
     # make it into a list
     bacformer_embeddings = list(bacformer_embeddings.type(torch.float32).cpu().numpy())
 
@@ -471,6 +497,7 @@ def add_bacformer_embeddings(
     input_col: str,
     output_col: str,
     model: Callable,
+    bacformer_model_type: Literal["base", "large"] = "base",
     max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
     genome_pooling_method: Literal["mean", "max"] = None,
@@ -484,6 +511,7 @@ def add_bacformer_embeddings(
             max_n_proteins=max_n_proteins,
             max_n_contigs=max_n_contigs,
             genome_pooling_method=genome_pooling_method,
+            bacformer_model_type=bacformer_model_type,
         )
     }
 
@@ -510,7 +538,7 @@ def get_prot_seq_col_name(cols: list[str]) -> str:
 def embed_dataset_col(
     dataset: Dataset | None,
     model_path: str,
-    model_type: Literal["esm2", "esmc", "protbert", "bacformer"] = "bacformer",
+    model_type: Literal["esm2", "esmc", "protbert", "bacformer", "bacformer_large"] = "bacformer",
     batch_size: int = 64,
     max_prot_seq_len: int = 1024,
     device: str = None,
@@ -539,13 +567,19 @@ def embed_dataset_col(
 
     # check if the model is Bacformer and adjust accordingly
     bacformer_model = None
-    if model_type == "bacformer":
+    if model_type == "bacformer" or model_type == "bacformer_large":
         logging.info("Bacformer model used, loading Bacformer model and its ESM-2 base model.")
         bacformer_model = (
             AutoModel.from_pretrained(model_path, trust_remote_code=True).eval().to(torch.bfloat16).to(device)
         )
-        model_type = "esm2"
-        model_path = "facebook/esm2_t12_35M_UR50D"
+        if model_type == "bacformer_large":
+            model_type = "esmc"
+            model_path = "Synthyra/ESMplusplus_small"
+            bacformer_model_type = "large"
+        else:
+            model_type = "esm2"
+            model_path = "facebook/esm2_t12_35M_UR50D"
+            bacformer_model_type = "base"
 
     # load pLM
     model, tokenizer = load_plm(model_path, model_type)
@@ -582,6 +616,7 @@ def embed_dataset_col(
                 max_n_proteins=max_n_proteins,
                 max_n_contigs=max_n_contigs,
                 genome_pooling_method=genome_pooling_method,
+                bacformer_model_type=bacformer_model_type,
             ),
             batched=False,
         )
@@ -592,6 +627,7 @@ def embed_dataset_col(
 def dataset_col_to_bacformer_inputs(
     dataset: Dataset | None,
     batch_size: int = 64,
+    bacformer_model_type: Literal["base", "large"] = "base",
     max_prot_seq_len: int = 1024,
     max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
@@ -605,9 +641,16 @@ def dataset_col_to_bacformer_inputs(
     :param max_n_contigs: maximum number of contigs to use for each genome, only used for Bacformer
     :return: a dataset with a column containing the Bacformer inputs
     """
-    # load pLM, we hardcode using ESM-2 as this is what Bacformer was trained on
-    model_type = "esm2"
-    model, tokenizer = load_plm("facebook/esm2_t12_35M_UR50D", model_type)
+    # load the appropriate model
+    if bacformer_model_type not in ["base", "large"]:
+        raise ValueError("Bacformer model type must be either 'base' or 'large'")
+    elif bacformer_model_type == "large":
+        model_type = "esmc"
+        model_path = "Synthyra/ESMplusplus_small"
+    else:
+        model_type = "esm2"
+        model_path = "facebook/esm2_t12_35M_UR50D"
+    model, tokenizer = load_plm(model_path=model_path, model_type=model_type)
 
     # embed protein sequences in the dataset
     # get the protein sequence column name
@@ -636,6 +679,7 @@ def dataset_col_to_bacformer_inputs(
             protein_embeddings=row["embeddings"],
             max_n_proteins=max_n_proteins,
             max_n_contigs=max_n_contigs,
+            bacformer_model_type=bacformer_model_type,
         ),
         batched=False,
         remove_columns=["embeddings"],
@@ -647,6 +691,7 @@ def protein_seqs_to_bacformer_inputs(
     protein_sequences: list[str] | list[list[str]],
     contig_ids: list[str | None] | None = None,
     batch_size: int = 64,
+    bacformer_model_type: Literal["base", "large"] = "base",
     max_prot_seq_len: int = 1024,
     max_n_proteins: int = 6000,
     max_n_contigs: int = 1000,
@@ -670,10 +715,15 @@ def protein_seqs_to_bacformer_inputs(
     -------
         dict: The inputs for the Bacformer model.
     """
-    # load the model
-    # we hardcode using ESM-2 as this is what Bacformer was trained on
-    model_path = "facebook/esm2_t12_35M_UR50D"
-    model_type = "esm2"
+    # load the appropriate model
+    if bacformer_model_type not in ["base", "large"]:
+        raise ValueError("Bacformer model type must be either 'base' or 'large'")
+    elif bacformer_model_type == "large":
+        model_type = "esmc"
+        model_path = "Synthyra/ESMplusplus_small"
+    else:
+        model_type = "esm2"
+        model_path = "facebook/esm2_t12_35M_UR50D"
     model, tokenizer = load_plm(model_path=model_path, model_type=model_type)
 
     # generate protein embeddings
@@ -693,6 +743,7 @@ def protein_seqs_to_bacformer_inputs(
         protein_embeddings=protein_embeddings,
         max_n_proteins=max_n_proteins,
         max_n_contigs=max_n_contigs,
+        bacformer_model_type=bacformer_model_type,
         cls_token_id=SPECIAL_TOKENS_DICT["CLS"],
         sep_token_id=SPECIAL_TOKENS_DICT["CLS"],
         prot_emb_token_id=SPECIAL_TOKENS_DICT["PROT_EMB"],
@@ -735,7 +786,7 @@ def protein_seqs_to_bacformer_emb(
     model, tokenizer = load_plm(model_path=model_path, model_type=model_type)
 
     # load Bacformer model
-    bacformer_model = BacformerModel.from_pretrained(bacformer_model_path).eval().to(torch.bfloat16)
+    bacformer_model = AutoModel.from_pretrained(bacformer_model_path).eval().to(torch.bfloat16)
 
     # generate protein embeddings
     protein_embeddings = compute_genome_protein_embeddings(
