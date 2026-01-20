@@ -228,7 +228,7 @@ model = AutoModel.from_pretrained(
 ).to(device).eval().to(torch.bfloat16)
 
 
-# embed the proteins with ESM-2 to get average protein embeddings
+# embed the proteins with a portein language model to get average protein embeddings, takes <1min on A100 GPU
 inputs = protein_seqs_to_bacformer_inputs(
     genome_info['protein_sequence'],
     device=device,
@@ -268,6 +268,7 @@ operon_dataset = embed_dataset_col(
     model_path="macwiatrak/bacformer-masked-complete-genomes",
     max_n_proteins=9000,
     genome_pooling_method=None,  # set to None to get embeddings for all proteins in the genome
+    model_type="bacformer",  # for Bacformer 26M model, use "bacformer_large" for Bacformer Large 300M
 )
 
 
@@ -278,9 +279,10 @@ strain_clustering_dataset = load_dataset("macwiatrak/strain-clustering-protein-s
 # use mean genome pooling as we need a single genome embedding for each genome for clustering
 strain_clustering_dataset = embed_dataset_col(
     dataset=strain_clustering_dataset,
-    model_path="macwiatrak/bacformer-masked-MAG",
+    model_path="macwiatrak/bacformer-large-masked-MAG",
     max_n_proteins=9000,
     genome_pooling_method="mean",
+    model_type="bacformer_large",  # for Bacformer 300M model, use "bacformer" for Bacformer Large 26M
 )
 
 # convert to pandas and print the first 5 rows

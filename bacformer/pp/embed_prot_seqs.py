@@ -1,3 +1,5 @@
+"""Functions for embedding protein sequences and computing Bacformer representations."""
+
 import logging
 import re
 from collections import defaultdict
@@ -273,7 +275,7 @@ def generate_protein_embeddings(
 
 
 def agg_prot_seqs_to_contigs(protein_sequences: list[str], contig_ids: list[str]) -> tuple[list[list[str]], list[str]]:
-    """Convert a list of protein sequences to a nested list of proteins where each nested list represents proteins in the same contig"""
+    """Convert a list of protein sequences to a nested list of proteins where each nested list represents proteins in the same contig."""
     contig_prot_seqs = defaultdict(list)
     for prot_seq, contig_id in zip(protein_sequences, contig_ids, strict=False):
         contig_prot_seqs[contig_id].append(prot_seq)
@@ -477,7 +479,7 @@ def add_protein_embeddings(
     max_prot_seq_len: int = 1024,
     genome_pooling_method: Literal["mean", "max"] = None,
 ):
-    """Helper function to add protein embeddings to a row."""
+    """Add protein embeddings to a row."""
     return {
         output_col: compute_genome_protein_embeddings(
             model=model,
@@ -502,7 +504,7 @@ def add_bacformer_embeddings(
     max_n_contigs: int = 1000,
     genome_pooling_method: Literal["mean", "max"] = None,
 ) -> dict[str, Any]:
-    """Helper function to add Bacformer embeddings to a row."""
+    """Add Bacformer embeddings to a row."""
     return {
         output_col: compute_bacformer_embeddings(
             model=model,
@@ -568,7 +570,11 @@ def embed_dataset_col(
     # check if the model is Bacformer and adjust accordingly
     bacformer_model = None
     if model_type == "bacformer" or model_type == "bacformer_large":
-        logging.info("Bacformer model used, loading Bacformer model and its ESM-2 base model.")
+        if model_type == "bacformer_large" and "large" not in model_path:
+            raise ValueError(
+                "For 'bacformer_large' model type, please provide an appropriate Bacformer Large model path starting with 'macwiatrak/bacformer-large'."
+            )
+        logging.info("Bacformer model used, loading Bacformer model and its pLM base model.")
         bacformer_model = (
             AutoModel.from_pretrained(model_path, trust_remote_code=True).eval().to(torch.bfloat16).to(device)
         )
@@ -631,7 +637,7 @@ def dataset_col_to_bacformer_inputs(
     max_prot_seq_len: int = 1024,
     max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
-):
+) -> Dataset:
     """Run script to embed protein sequences with various models.
 
     :param dataset: HuggingFace dataset
@@ -758,6 +764,7 @@ def protein_seqs_to_bacformer_emb(
     bacformer_model_path: str,
     protein_sequences: list[str],
     batch_size: int = 64,
+    bacformer_model_type: Literal["base", "large"] = "base",
     max_prot_seq_len: int = 1024,
     max_n_proteins: int = 9000,
     max_n_contigs: int = 1000,
@@ -769,6 +776,7 @@ def protein_seqs_to_bacformer_emb(
         bacformer_model_path (str): The path to the Bacformer model.
         protein_sequences (List[str]): The protein sequences to convert.
         batch_size (int): The batch size to use for processing.
+        bacformer_model_type (str): The type of Bacformer model, either "base" or "large".
         max_prot_seq_len (int): The maximum protein sequence length for the model.
         max_n_proteins (int): The maximum number of proteins to use for each genome.
         max_n_contigs (int): The maximum number of contigs to use for each genome.
@@ -779,10 +787,14 @@ def protein_seqs_to_bacformer_emb(
     -------
         dict: a numpy array of or list of numpy arrays with contextualised protein embeddings.
     """
-    # load the model
-    # we hardcode using ESM-2 as this is what Bacformer was trained on
-    model_path = "facebook/esm2_t12_35M_UR50D"
-    model_type = "esm2"
+    if bacformer_model_type not in ["base", "large"]:
+        raise ValueError("Bacformer model type must be either 'base' or 'large'")
+    elif bacformer_model_type == "large":
+        model_type = "esmc"
+        model_path = "Synthyra/ESMplusplus_small"
+    else:
+        model_type = "esm2"
+        model_path = "facebook/esm2_t12_35M_UR50D"
     model, tokenizer = load_plm(model_path=model_path, model_type=model_type)
 
     # load Bacformer model
@@ -803,7 +815,8 @@ def protein_seqs_to_bacformer_emb(
     output = compute_bacformer_embeddings(
         model=bacformer_model,
         protein_embeddings=protein_embeddings,
-        contig_ids=None,
+        contig_ids=None,  # we handle contig ids in compute_genome_protein_embeddings
+        bacformer_model_type=bacformer_model_type,
         max_n_proteins=max_n_proteins,
         max_n_contigs=max_n_contigs,
         genome_pooling_method=genome_pooling_method,
