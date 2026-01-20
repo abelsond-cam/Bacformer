@@ -22,9 +22,9 @@ finetuned for various tasks. We also provide tutorials and make Bacformer availa
 
 ## News
 
-- **2025-01-20**: Released Bacformer Large model, a 300M parameter model with much improved performance on downstream tasks.
+- **2025-01-20**: Released **Bacformer Large** models ([complete genomes](https://huggingface.co/macwiatrak/bacformer-large-masked-complete-genomes) and [MAGs](https://huggingface.co/macwiatrak/bacformer-large-masked-MAG)), a 300M parameter model with much improved performance on downstream tasks.
 - **2025-01-20**: Released [BacBench](https://github.com/macwiatrak/BacBench), a framework for embedding bacterial genomes with genomic language models and evaluating their performance on downstream tasks.
-- **2025-11-21**: Bacformer won the AI x BIO hackathon organised by [Evolved Technology](https://www.evolvedtechnology.org/) 🎉.
+- **2025-11-21**: Bacformer won the AI x Bio hackathon organised by [Evolved Technology](https://www.evolvedtechnology.org/) 🎉.
 - **2025-07-21**: Bacformer preprint is now available on [biorxiv](https://www.biorxiv.org/content/10.1101/2025.07.20.665723v1).
 - **2025-05-15**: Bacformer is now available on [HuggingFace](https://huggingface.co/macwiatrak).
 
