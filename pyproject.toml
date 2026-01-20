@@ -34,6 +34,7 @@ dependencies = [
   "biopython>=1.83",
   "dataclasses-json>=0.6.1",
   "datasets>=2.21",
+  "einops",
   "hf-xet>=1.0.5",
   "igraph>=0.11.8",
   "leidenalg~=0.10.2",

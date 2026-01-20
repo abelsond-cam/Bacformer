@@ -22,6 +22,9 @@ finetuned for various tasks. We also provide tutorials and make Bacformer availa
 
 ## News
 
+- **2025-01-20**: Released Bacformer Large model, a 300M parameter model with much improved performance on downstream tasks.
+- **2025-01-20**: Released [BacBench](https://github.com/macwiatrak/BacBench), a framework for embedding bacterial genomes with genomic language models and evaluating their performance on downstream tasks.
+- **2025-11-21**: Bacformer won the AI x BIO hackathon organised by [Evolved Technology](https://www.evolvedtechnology.org/) 🎉.
 - **2025-07-21**: Bacformer preprint is now available on [biorxiv](https://www.biorxiv.org/content/10.1101/2025.07.20.665723v1).
 - **2025-05-15**: Bacformer is now available on [HuggingFace](https://huggingface.co/macwiatrak).
 
@@ -47,8 +50,11 @@ finetuned for various tasks. We also provide tutorials and make Bacformer availa
 Bacformer is based on [PyTorch](https://pytorch.org/) and [HuggingFace Transformers](https://huggingface.co/docs/transformers/index)
 and was developed in `python=3.10`.
 
-Bacformer uses [ESM-2](https://github.com/facebookresearch/esm) protein embedding as input (`esm2_t12_35M_UR50D`). We
-recommend using the [faplm](https://github.com/pengzhangzhi/faplm) package to compute protein embeddings in a fast and efficient way.
+Bacformer uses protein embeddings as input, leveraging pretrained protein language models:
+- Bacformer (26M parameters) uses [ESM-2](https://huggingface.co/facebook/esm2_t12_35M_UR50D) (`esm2_t12_35M_UR50D`)
+- Bacformer Large (300M parameters) uses [ESM-C](https://huggingface.co/EvolutionaryScale/esmc-300m-2024-12) (`esmc-300m-2024-12`)
+
+We recommend using the [faplm](https://github.com/pengzhangzhi/faplm) package to compute protein embeddings in a fast and efficient way.
 
 ### Installation
 
@@ -117,7 +123,7 @@ from bacformer.pp import protein_seqs_to_bacformer_inputs
 
 device = "cuda:0"
 model = AutoModel.from_pretrained(
-    "macwiatrak/bacformer-masked-MAG", trust_remote_code=True
+    "macwiatrak/bacformer-large-masked-MAG", trust_remote_code=True
 ).to(device).eval().to(torch.bfloat16)
 
 # Example input: a sequence of protein sequences
@@ -135,6 +141,7 @@ inputs = protein_seqs_to_bacformer_inputs(
     device=device,
     batch_size=128,  # the batch size for computing the protein embeddings
     max_n_proteins=6000,  # the maximum number of proteins Bacformer was trained with
+    bacformer_model_type="large", # must be equal to "large" (Bacformer Large 300M) or "base" (Bacformer 26M)
 )
 
 # compute contextualised protein embeddings with Bacformer
@@ -163,7 +170,7 @@ from bacformer.pp import protein_seqs_to_bacformer_inputs
 
 device = "cuda:0"
 model = AutoModel.from_pretrained(
-    "macwiatrak/bacformer-masked-MAG", trust_remote_code=True
+    "macwiatrak/bacformer-large-masked-MAG", trust_remote_code=True
 ).to(device).eval().to(torch.bfloat16)
 
 # Example input: a sequence of protein sequences
@@ -188,10 +195,11 @@ inputs = protein_seqs_to_bacformer_inputs(
     device=device,
     batch_size=128,  # the batch size for computing the protein embeddings
     max_n_proteins=6000,  # the maximum number of proteins Bacformer was trained with
+    bacformer_model_type="large",
 )
 
 # contig_ids represent the contig information for each protein
-print(inputs['token_type_ids'])
+print(inputs['contig_ids'])
 # compute contextualised protein embeddings with Bacformer
 with torch.no_grad():
     outputs = model(**inputs, return_dict=True)
@@ -214,7 +222,7 @@ genome_info = preprocess_genome_assembly(filepath="files/pao1.gbff")
 # load the model
 device = "cuda:0"
 model = AutoModel.from_pretrained(
-    "macwiatrak/bacformer-masked-complete-genomes", trust_remote_code=True
+    "macwiatrak/bacformer-large-masked-complete-genomes", trust_remote_code=True
 ).to(device).eval().to(torch.bfloat16)
 
 
@@ -224,6 +232,7 @@ inputs = protein_seqs_to_bacformer_inputs(
     device=device,
     batch_size=128,  # the batch size for computing the protein embeddings
     max_n_proteins=6000,  # the maximum number of proteins Bacformer was trained with
+    bacformer_model_type="large", # must be equal to "large" (Bacformer Large 300M) or "base" (Bacformer 26M)
 )
 
 # compute contextualised protein embeddings with Bacformer
@@ -298,6 +307,9 @@ from transformers import AutoModel, AutoModelForMaskedLM, AutoModelForCausalLM
 
 device = "cuda:0"
 # load the Bacformer model trained on MAGs with an autoregressive objective
+masked_large_model = AutoModelForMaskedLM.from_pretrained("macwiatrak/bacformer-large-masked-complete-genomes", trust_remote_code=True).to(torch.bfloat16).eval().to(device)
+
+# load the Bacformer model trained on MAGs with an autoregressive objective
 causal_model = AutoModelForCausalLM.from_pretrained("macwiatrak/bacformer-causal-MAG", trust_remote_code=True).to(torch.bfloat16).eval().to(device)
 
 # load the Bacformer model trained on MAGs with a masked objective
@@ -305,7 +317,7 @@ masked_model = AutoModelForMaskedLM.from_pretrained("macwiatrak/bacformer-masked
 
 # load the Bacformer encoder model finetuned on complete genomes (i.e. without the protein family classification head)
 # we recommend using this model for complete genomes as a start for finetuning on your own dataset for all tasks except generation
-encoder_model = AutoModel.from_pretrained("macwiatrak/bacformer-masked-complete-genomes", trust_remote_code=True).to(torch.bfloat16).eval().to(device)
+encoder_model = AutoModel.from_pretrained("macwiatrak/bacformer-large-masked-complete-genomes", trust_remote_code=True).to(torch.bfloat16).eval().to(device)
 ```
 
 ## Pretrained model checkpoints
@@ -314,8 +326,10 @@ We provide a range of pretrained model checkpoints for Bacformer which are avail
 
 | Checkpoint name                                                         | Genome type                         | Description                                                                                                                                                                                                                                                         |
 |-------------------------------------------------------------------------|-------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `bacformer-causal-MAG`                                                  | MAG                                 | A model pretrained on the ~1.3 M metagenome-assembled genomes (MAG) with an autoregressive objective.                                                                                                                                                               |
-| `bacformer-masked-MAG`                                                  | MAG                                 | A model pretrained on the ~1.3 M metagenome-assembled genomes (MAG) with a masked objective, randomly masking 15 % of proteins.                                                                                                                                     |
+| `bacformer-large-masked-MAG`                                            | MAG                                 | A 300M parameter model pretrained on the ~1.3 M metagenome-assembled genomes (MAG) with a masked objective, randomly masking 15 % of the proteins.
+| `bacformer-large-masked-complete-genomes`                               | Complete (i.e. uninterrupted)       | A 300M parameter model pretrained on the ~1.3 M metagenome-assembled genomes (MAG) with a masked objective, randomly masking 15 % of the proteins.
+| `bacformer-causal-MAG`                                                  | MAG                                 | A 26M parameter model pretrained on the ~1.3 M metagenome-assembled genomes (MAG) with an autoregressive objective.                                                                                                                                                               |
+| `bacformer-masked-MAG`                                                  | MAG                                 | A 26M parameter model pretrained on the ~1.3 M metagenome-assembled genomes (MAG) with a masked objective, randomly masking 15 % of proteins.                                                                                                                                     |
 | `bacformer-causal-complete-genomes`                                     | Complete (i.e. uninterrupted)       | A `bacformer-causal-MAG` finetuned on a set of ~40 k complete genomes with an autoregressive objective.                                                                                                                                                             |
 | `bacformer-masked-complete-genomes`                                     | Complete (i.e. uninterrupted)       | A `bacformer-masked-MAG` finetuned on a set of ~40 k complete genomes with a masked objective, randomly masking 15 % of the proteins.                                                                                                                               |
 | `bacformer-causal-protein-family-modeling-complete-genomes`             | Complete (i.e. uninterrupted)       | A `bacformer-causal-MAG` finetuned on a set of ~40 k complete genomes with an autoregressive objective. In contrast to other models, this model takes as input a protein-family token rather than the protein sequence, allowing generation of sequences of protein families. |
