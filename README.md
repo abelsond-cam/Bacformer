@@ -247,6 +247,12 @@ print('last hidden state shape:', outputs["last_hidden_state"].shape)
 
 ### Embed dataset column with Bacformer
 
+#### ESM-C Embedding
+The first step of embedding to Bacformer is to embed the protein sequences with ESM. 
+< INSTRUCTIONS FOR ESM-C HERE>
+
+
+#### Now Contextualise the Proteins Embeddings with Bacformer
 Use Bacformer to embed a column of protein sequences from a HuggingFace dataset. The example below can be easily adapted
 to a pandas DataFrame or any other data structure containing protein sequences.
 
